@@ -1,10 +1,10 @@
 import { Denops } from "https://deno.land/x/denops_std@v3.3.0/mod.ts";
 import { decorate } from "https://deno.land/x/denops_std@v3.3.0/buffer/mod.ts";
-import { vim } from "https://deno.land/x/denops_std@v3.3.0/variable/mod.ts";
 import * as autocmd from "https://deno.land/x/denops_std@v3.3.0/autocmd/mod.ts";
+import * as helper from "./helper.ts";
+import { Decorator } from "./types.ts";
 
 export async function main(denops: Denops): Promise<void> {
-
   // ヤンクされた箇所の色を変更する
   const hiColorKey: string = "YankedHighlight";
 
@@ -15,31 +15,25 @@ export async function main(denops: Denops): Promise<void> {
   // ハイライト持続期間(ms)
   const highlightTime: number = 1000;
 
+  // head column
+  const firstColumn = 1;
+
   const currentBufferNumber: number = 0;
 
-  /**
-   * TextYankPostで取得した内容で判断する
-   * - リスト要素が１つ
-   *   - 該当行の文字数＝要素の文字数の場合はyyなので、行全体をハイライトする
-   *   - それ以外の場合は単一行内でのywやy3wなどなので、カーソル位置から要素の文字数分ハイライトする
-   * - リスト要素が複数
-   *   - 複数行にわたるヤンクなので、行ごとにカーソル位置から要素の文字数分ハイライトする
-   *     - visual mode
-   *     - 矩形 mode
-   *     - y9y
-   */
   denops.dispatcher = {
     async yanked(): Promise<void> {
-
       // Opration command
-      let operator = await vim.get(denops, "event.operator");
+      let operator = await helper.operator(denops);
 
       if (operator !== "y") {
         return;
       }
 
       // List of yanked text
-      let regcontents = (await vim.get(denops, "event.regcontents")) as Array<string>;
+      let regcontents = await helper.regcontens(denops);
+
+      // Regtype
+      let regtype = await helper.regtype(denops);
 
       // Highlight color
       await denops.cmd(
@@ -47,40 +41,84 @@ export async function main(denops: Denops): Promise<void> {
       );
 
       // Cursor position
-      let line = (await denops.eval(`line(".")`)) as number;
-      let col = ((await denops.eval(`col(".")`)) as number);
+      let line = await helper.currentLine(denops);
+      let col = await helper.currentColumn(denops);
 
       if (regcontents.length === 1) {
         // Yanked single Line
 
         let yankedText = regcontents[0];
-        let cursorLineText = (await denops.eval(`getline("${line}")`)) as string;
+        let cursorLineText = await helper.text(denops, line);
 
         if (yankedText === cursorLineText) {
+          // yy
           // Highlight all characters in current line
-          const firstColumn = 1;
 
-          await yankHighlight(currentBufferNumber, line, firstColumn, textLength(cursorLineText));
+          let dec: Array<Decorator> = Array(createDecorator(line, firstColumn, cursorLineText))
+
+          await decorate(denops, 0, dec);
+
+//          await yankHighlight(
+//            currentBufferNumber,
+//            line,
+//            firstColumn,
+//            textLength(cursorLineText),
+//          );
         } else {
+          // yaw, y2w, etc...
           // Highlight the number of characters that is yanked from the current cursor position
-          await yankHighlight(currentBufferNumber, line, col, textLength(yankedText));
+          await yankHighlight(
+            currentBufferNumber,
+            line,
+            col,
+            textLength(yankedText),
+          );
         }
       } else {
         // Yanked multi line
         let targetLine = line;
 
         for (let yankedText of regcontents) {
-          let targetLineText = (await denops.eval(`getline("${targetLine}")`)) as string;
+          let targetLineText =
+            (await denops.eval(`getline("${targetLine}")`)) as string;
 
-          if (yankedText === targetLineText) {
-            // Highlight all characters in the line
-            const firstColumn = 1;
-
-            await yankHighlight(currentBufferNumber, targetLine, firstColumn, textLength(targetLineText));
+          if (regtype.charCodeAt(0) === 22) {
+            // If the beginning of regtype is 22, it's blockwise-operatioin
+            console.log(yankedText);
+            await yankHighlight(
+              currentBufferNumber,
+              targetLine,
+              col,
+              textLength(yankedText),
+            );
           } else {
-            // 最初のラインが途中で始まるケースと最後のラインが途中で終わるケースを考慮する必要がある
-            // 多分decorateに渡す情報をオブジェクトにして配列で渡すようにするのがいいんじゃないかなー
-            // あとは矩形選択をどうしようか...
+            if (yankedText === targetLineText) {
+              // Highlight all characters in the line
+              await yankHighlight(
+                currentBufferNumber,
+                targetLine,
+                firstColumn,
+                textLength(targetLineText),
+              );
+            } else {
+              if (targetLine === line) {
+                // Highlight first line
+                await yankHighlight(
+                  currentBufferNumber,
+                  targetLine,
+                  col,
+                  textLength(yankedText),
+                );
+              } else {
+                // Highlight multi-line yank
+                await yankHighlight(
+                  currentBufferNumber,
+                  targetLine,
+                  firstColumn,
+                  textLength(yankedText),
+                );
+              }
+            }
           }
 
           targetLine++;
@@ -92,8 +130,19 @@ export async function main(denops: Denops): Promise<void> {
   /**
    * マルチバイト時の考慮をしつつハイライト範囲となる文字数を取得する
    */
-  function textLength(text:string): number {
+  function textLength(text: string): number {
     return encodeURI(text).replace(/%../g, "*").length;
+  }
+
+  function createDecorator(line: number, col: number, text: string): Decorator {
+    let dec: Decorator = {
+      line: line,
+      column: col,
+      length: textLength(text),
+      highlight: hiColorKey,
+    };
+
+    return dec;
   }
 
   /**
@@ -132,4 +181,3 @@ export async function main(denops: Denops): Promise<void> {
     `call denops#request('${denops.name}', 'yanked', [])`,
   );
 }
-
