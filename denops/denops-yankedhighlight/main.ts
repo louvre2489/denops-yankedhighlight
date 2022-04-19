@@ -26,8 +26,6 @@ export async function main(denops: Denops): Promise<void> {
         return;
       }
 
-      console.log(await fn.bufnr(denops) as number);
-
       // List of yanked text
       let regcontents = await helper.regcontens(denops);
 
