@@ -1,24 +1,21 @@
 import { Denops } from "https://deno.land/x/denops_std@v3.3.0/mod.ts";
 import { decorate } from "https://deno.land/x/denops_std@v3.3.0/buffer/mod.ts";
 import * as autocmd from "https://deno.land/x/denops_std@v3.3.0/autocmd/mod.ts";
+import * as fn from "https://deno.land/x/denops_std@v3.3.0/function/mod.ts";
 import * as helper from "./helper.ts";
+import * as variable from "./variable.ts";
 import { Decorator } from "./types.ts";
 
 export async function main(denops: Denops): Promise<void> {
+
   // Highlight key
   const hiColorKey: string = "YankedHighlight";
 
-  //  const hiBgColor: number = 186;
-  const hiBgColor: number = 12;
-  const hiFgColor: number = 16;
-
-  // Highlight duration(ms)
-  const highlightTime: number = 1000;
+  // key-code of blockwise-operatioin
+  const blockwiseOperatioin: number = 22;
 
   // head column
   const firstCol = 1;
-
-  const currentBufferNumber: number = 0;
 
   denops.dispatcher = {
     async yanked(): Promise<void> {
@@ -29,6 +26,8 @@ export async function main(denops: Denops): Promise<void> {
         return;
       }
 
+      console.log(await fn.bufnr(denops) as number);
+
       // List of yanked text
       let regcontents = await helper.regcontens(denops);
 
@@ -36,73 +35,70 @@ export async function main(denops: Denops): Promise<void> {
       let regtype = await helper.regtype(denops);
 
       // Highlight color
+      let hiBgColor = await variable.highlightBgColor(denops);
+      let hiFgColor = await variable.highlightFgColor(denops);
       await denops.cmd(
         `highlight ${hiColorKey} ctermbg = ${hiBgColor} ctermfg = ${hiFgColor}`,
       );
 
       // Cursor position
-      let line = await helper.currentLine(denops);
-      let col = await helper.currentColumn(denops);
+      let cursorLine = await helper.currentLine(denops);
+      let cursorCol = await helper.currentColumn(denops);
 
-      if (regcontents.length === 1) {
-        // Yanked single Line
+      let yankedLine = cursorLine;
 
-        let yankedText = regcontents[0];
-        let cursorLineText = await helper.text(denops, line);
+      let decs = new Array();
 
-        if (yankedText === cursorLineText) {
-          // yy
-          // Highlight all characters in current line
+      for (let yankedText of regcontents) {
+        let targetLineText = await helper.text(denops, yankedLine);
+        let startCol = startAtFirstCol_MultiLineYank(yankedText, targetLineText)
+          ? firstCol
+          : cursorCol;
 
-          let dec: Array<Decorator> = Array(
-            createDecorator(line, firstCol, cursorLineText),
-          );
+        decs.push(createDecorator(yankedLine, startCol, yankedText));
 
-          yankHighlight(dec, line, line);
-        } else {
-          // yaw, y2w, etc...
-          // Highlight the number of characters that is yanked from the current cursor position
-          let dec: Array<Decorator> = Array(
-            createDecorator(line, col, yankedText),
-          );
+        yankedLine++;
+      }
 
-          yankHighlight(dec, line, line);
+      // Highlight
+      yankHighlight(decs, cursorLine, yankedLine);
+
+      /**
+       * Define highlight start position(first column or middle of the line)
+       */
+      function startAtFirstCol_MultiLineYank(
+        yankedText: string,
+        targetLineText: string,
+      ): boolean {
+        if (isBlockwiseOperation(regtype)) {
+          // When blockwise-operation
+          return false;
+        } else if (
+          (isInitLine(yankedLine, cursorLine)) &&
+          !isSameText(yankedText, targetLineText)
+        ) {
+          // When first line & highlight in the middle of the col
+          return false;
         }
-      } else {
-        // Yanked multi line
-        let yankedLine = line;
-
-        let decs = new Array();
-
-        for (let yankedText of regcontents) {
-          let targetLineText = await helper.text(denops, yankedLine);
-
-          if (regtype.charCodeAt(0) === 22) {
-            // If the beginning of regtype is 22, it's blockwise-operatioin
-            decs.push(createDecorator(yankedLine, col, yankedText));
-          } else {
-            // multi-line yank other than blockwise-operation
-            if (yankedText === targetLineText) {
-              // Highlight all characters in the line
-              decs.push(createDecorator(yankedLine, firstCol, targetLineText));
-            } else {
-              if (yankedLine === line) {
-                // First line, highlight at current col
-                decs.push(createDecorator(yankedLine, col, yankedText));
-              } else {
-                // Highlight multi-line yank
-                decs.push(createDecorator(yankedLine, firstCol, yankedText));
-              }
-            }
-          }
-
-          yankedLine++;
-        }
-
-        yankHighlight(decs, line, yankedLine);
+        return true;
       }
     },
   };
+
+  /*
+   * If the beginning of regtype is 22, it's blockwise-operatioin
+   */
+  function isBlockwiseOperation(regtype: string): boolean {
+    return regtype.charCodeAt(0) === blockwiseOperatioin;
+  }
+
+  function isSameText(yankedText: string, lineText: string): boolean {
+    return yankedText === lineText;
+  }
+
+  function isInitLine(startLine: number, yankedLine: number): boolean {
+    return startLine === yankedLine;
+  }
 
   /**
    * Get the number of characters in the highlight range while considering multibyte
@@ -133,25 +129,28 @@ export async function main(denops: Denops): Promise<void> {
     startLine: number,
     endLine: number,
   ): Promise<void> {
-    await decorate(denops, currentBufferNumber, decs);
+    let bufNr = await fn.bufnr(denops) as number;
+
+    await decorate(denops, bufNr, decs);
+
+    let highlightDuration = await variable.highlightDuration(denops);
 
     // Stop highlight
     setTimeout(() => {
       denops.eval(
-        `nvim_buf_clear_namespace(${currentBufferNumber}, -1, ${
-          startLine - 1
-        }, ${endLine})`,
+        `nvim_buf_clear_namespace(${bufNr}, -1, ${startLine - 1}, ${endLine})`,
       );
-    }, highlightTime);
+    }, highlightDuration);
   }
 
   /**
    * autocmd
    */
+  const calledMethod = 'yanked';
   await autocmd.define(
     denops,
     "TextYankPost",
     "*",
-    `call denops#request('${denops.name}', 'yanked', [])`,
+    `call denops#request('${denops.name}', '${calledMethod}', [])`,
   );
 }
