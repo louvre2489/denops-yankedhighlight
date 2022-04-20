@@ -7,81 +7,94 @@ import * as variable from "./variable.ts";
 import { Decorator } from "./types.ts";
 
 export async function main(denops: Denops): Promise<void> {
-
   // Highlight key
   const hiColorKey: string = "YankedHighlight";
+
+  const yankOperation: string = "y";
 
   // key-code of blockwise-operatioin
   const blockwiseOperatioin: number = 22;
 
   // head column
-  const firstCol = 1;
+  const firstCol: number = 1;
 
   denops.dispatcher = {
     async yanked(): Promise<void> {
       // Opration command
       let operator = await helper.operator(denops);
 
-      if (operator !== "y") {
+      if (operator !== yankOperation) {
         return;
       }
 
       // List of yanked text
-      let regcontents = await helper.regcontens(denops);
+      let contents = await helper.regcontens(denops);
 
       // Regtype
-      let regtype = await helper.regtype(denops);
-
-      // Highlight color
-      let hiBgColor = await variable.highlightBgColor(denops);
-      let hiFgColor = await variable.highlightFgColor(denops);
-      await denops.cmd(
-        `highlight ${hiColorKey} ctermbg = ${hiBgColor} ctermfg = ${hiFgColor}`,
-      );
+      let type = await helper.regtype(denops);
 
       // Cursor position
       let cursorLine = await helper.currentLine(denops);
       let cursorCol = await helper.currentColumn(denops);
 
-      let yankedLine = cursorLine;
-
-      let decs = new Array();
-
-      for (let yankedText of regcontents) {
-        let targetLineText = await helper.text(denops, yankedLine);
-        let startCol = startAtFirstCol_MultiLineYank(yankedText, targetLineText)
-          ? firstCol
-          : cursorCol;
-
-        decs.push(createDecorator(yankedLine, startCol, yankedText));
-
-        yankedLine++;
-      }
-
-      // Highlight
-      yankHighlight(decs, cursorLine, yankedLine);
-
-      /**
-       * Define highlight start position(first column or middle of the line)
-       */
-      function startAtFirstCol_MultiLineYank(
-        yankedText: string,
-        targetLineText: string,
-      ): boolean {
-        if (isBlockwiseOperation(regtype)) {
-          // When blockwise-operation
-          return false;
-        } else if (
-          (isInitLine(yankedLine, cursorLine)) &&
-          !isSameText(yankedText, targetLineText)
-        ) {
-          // When first line & highlight in the middle of the col
-          return false;
-        }
-        return true;
-      }
+      // start highlight
+      highlight(type, contents, cursorLine, cursorCol);
     },
   };
+
+  async function highlight(
+    type: string,
+    contents: string[],
+    cursorLine: number,
+    cursorCol: number,
+  ): Promise<void> {
+
+    // Highlight color
+    let hiBgColor = await variable.highlightBgColor(denops);
+    let hiFgColor = await variable.highlightFgColor(denops);
+    await denops.cmd(
+      `highlight ${hiColorKey} ctermbg = ${hiBgColor} ctermfg = ${hiFgColor}`,
+    );
+
+    let yankedLine = cursorLine;
+
+    let decs = new Array();
+
+    for (let yankedText of contents) {
+      let targetLineText = await helper.text(denops, yankedLine);
+      let startCol = calcStartCol(yankedText, targetLineText)
+        ? firstCol
+        : cursorCol;
+
+      decs.push(createDecorator(yankedLine, startCol, yankedText));
+
+      yankedLine++;
+    }
+
+    // Highlight
+    yankHighlight(decs, cursorLine, yankedLine);
+
+    /**
+     * Calculate highlight start position(first column or middle of the line)
+     */
+    function calcStartCol(
+      yankedText: string,
+      targetLineText: string,
+    ): boolean {
+      if (isBlockwiseOperation(type)) {
+        // When blockwise-operation
+        return false;
+      } else if (
+        (isInitLine(yankedLine, cursorLine)) &&
+        !isSameText(yankedText, targetLineText)
+      ) {
+        // When first line & highlight in the middle of the col
+        return false;
+      }
+
+      return true;
+    }
+  }
 
   /*
    * If the beginning of regtype is 22, it's blockwise-operatioin
@@ -144,7 +157,7 @@ export async function main(denops: Denops): Promise<void> {
   /**
    * autocmd
    */
-  const calledMethod = 'yanked';
+  const calledMethod = "yanked";
   await autocmd.define(
     denops,
     "TextYankPost",

@@ -18,7 +18,7 @@ let g:yankedhighlight_duration = 1000
 Set highlight background color.
 ```vim
 " Default
-let g:yankedhighlight_bg_color= 220
+let g:yankedhighlight_bg_color= 228
 ```
 
 ### Highlight Foreground Color

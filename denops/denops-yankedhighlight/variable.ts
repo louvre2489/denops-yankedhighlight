@@ -12,6 +12,8 @@ export async function highlightDuration(denops: Denops): Promise<number> {
 
   if (duration === null) {
     return defaultHighlightDuration;
+  } else if (duration < 0) {
+    return 0;
   }
 
   return duration;
@@ -21,7 +23,7 @@ export async function highlightDuration(denops: Denops): Promise<number> {
  * Highlight Background Color
  */
 const k_HighlightBgColor = "yankedhighlight_bg_color";
-const defaultHighlightBgColor = 220;
+const defaultHighlightBgColor = 228;
 
 export async function highlightBgColor(denops: Denops): Promise<number> {
   let bgColor = await globalVariable<number>(denops, k_HighlightBgColor);
